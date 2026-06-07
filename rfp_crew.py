@@ -1,110 +1,118 @@
 import os
+import re
+import time
 import google.generativeai as genai
+from google.api_core.exceptions import ResourceExhausted
 from dotenv import load_dotenv
 
-# 1. Explicitly load variables from your .env file
 load_dotenv()
 
-# 2. Look for either GEMINI_API_KEY or GOOGLE_API_KEY
 api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-
-# 3. Safety check
 if not api_key:
-    raise ValueError("API Key not found. Please ensure you have a .env file with your key in the same folder.")
+    raise ValueError("API Key not found. Please ensure you have a .env file with your key.")
 
-# 4. Configure the SDK
 genai.configure(api_key=api_key)
-
-# We use gemini-2.5-flash as it is highly optimized for speed and multi-step chaining
 MODEL_NAME = "gemini-2.5-flash"
 
-# ==========================================
-# Phase 1: Define the Agents (Personas)
-# ==========================================
-
-# Agent 1: The Client
-client_agent = genai.GenerativeModel(
+# --- AGENT PERSONAS ---
+# NEW: The Discovery Agent
+discovery_agent = genai.GenerativeModel(
     model_name=MODEL_NAME,
     system_instruction=(
-        "You are the Operations Director of a mid-sized logistics company. "
-        "Describe your business needs, pain points, and rough timeline in a standard "
-        "paragraph format. Keep it concise but detailed enough for a software team to understand."
+        "You are a Lead Technical Business Analyst. Review the client's initial brief and "
+        "ask exactly 3 targeted, highly technical clarifying questions that are necessary to create "
+        "an accurate Software RFP and budget. Output ONLY the numbered questions."
     )
 )
 
-# Agent 2: The Solutions Architect
+client_agent = genai.GenerativeModel(
+    model_name=MODEL_NAME,
+    system_instruction="You are the Operations Director. Synthesize the initial brief and the answers to the BA's questions into a cohesive, detailed project background."
+)
+
 architect_agent = genai.GenerativeModel(
     model_name=MODEL_NAME,
     system_instruction=(
-        "You are a Senior Solutions Architect at a software services company. "
-        "Write a formal Request for Proposal (RFP) based on the client's brief. "
-        "Include: 1. Executive Summary, 2. Project Scope, 3. Proposed Technology Stack, "
-        "4. Project Deliverables, and 5. Estimated Timeline (in weeks). "
-        "Output standard Markdown."
+        "You are a Senior Solutions Architect. Write a formal RFP including Executive Summary, Scope, Tech Stack, and Timeline based on the comprehensive brief. "
+        "CRITICAL INSTRUCTION: At the very bottom of your response, you MUST provide a comma-separated list of the required roles enclosed in brackets. "
+        "Example: [ROLES: Frontend Developer, Backend Developer, QA Engineer, Project Manager]"
     )
 )
 
-# Agent 3: The Financial Analyst
 finance_agent = genai.GenerativeModel(
     model_name=MODEL_NAME,
     system_instruction=(
-        "You are a Financial Analyst for a software agency. Review the provided RFP "
-        "and generate a detailed budget document. Break the budget down into: "
-        "1. Roles required, 2. Estimated hours per role, 3. Hourly rate per role, "
-        "4. Infrastructure/Cloud costs, and 5. Total Estimated Cost. "
-        "Format this strictly as a clean Markdown data table."
+        "You are a Financial Analyst. Review the RFP and generate a budget. "
+        "You will be provided with specific hourly rates for the roles. You MUST use these exact roles and rates to calculate the final costs. "
+        "Format the output as a clean Markdown data table."
     )
 )
 
-# Agent 4: The Manager / Reviewer
 reviewer_agent = genai.GenerativeModel(
     model_name=MODEL_NAME,
-    system_instruction=(
-        "You are the Agency Director. Review both the RFP and the Budget. "
-        "State whether the budget accurately reflects the scope of the RFP. "
-        "If the total budget exceeds $100,000, explicitly suggest three technical or "
-        "feature areas where the client could cut scope to save money."
-    )
+    system_instruction="You are the Agency Director. Review the budget. If it exceeds $100,000, suggest three scope cuts."
 )
 
-# ==========================================
-# Phase 2: Execute the Agentic Workflow
-# ==========================================
+# --- SMART RETRY WRAPPER ---
+def generate_with_retry(agent, prompt, max_retries=4):
+    for attempt in range(max_retries):
+        try:
+            return agent.generate_content(prompt).text
+        except Exception as e:
+            error_msg = str(e)
+            if "429" in error_msg or "Quota" in error_msg or "ResourceExhausted" in error_msg:
+                if attempt == max_retries - 1:
+                    raise e
+                print(f"⚠️ Rate limit hit. Waiting 65 seconds... (Attempt {attempt + 1}/{max_retries})")
+                time.sleep(65)
+            else:
+                raise e
 
-# RENAME THIS FUNCTION TO MATCH WHAT app.py EXPECTS:
-def create_rfp_workflow(project_description):
-    print("🚀 Starting Agentic Workflow...\n")
+# --- PHASE 1: Discovery Phase ---
+def generate_clarifying_questions(company_name, project_description):
+    print("⏳ Agent 0 (Discovery) generating questions...")
+    prompt = f"Client: {company_name}\nInitial Scope: {project_description}"
+    return generate_with_retry(discovery_agent, prompt)
 
-    # Step 1: Client generates the raw brief
-    print("⏳ Agent 1 (Client) is generating business requirements...")
-    client_response = client_agent.generate_content(project_description)
-    client_brief = client_response.text
-    print("✅ Client Brief Generated.\n")
+# --- PHASE 2: Draft RFP & Extract Roles ---
+def draft_rfp_and_get_roles(company_name, project_description, qa_answers):
+    print("⏳ Agent 1 (Client) synthesizing requirements...")
+    full_context = f"Company: {company_name}\nInitial Scope: {project_description}\nAdditional Details: {qa_answers}"
+    client_brief = generate_with_retry(client_agent, full_context)
 
-    # Step 2: Architect drafts the RFP based on the brief
-    print("⏳ Agent 2 (Architect) is drafting the formal RFP...")
-    rfp_response = architect_agent.generate_content(f"Client Brief:\n{client_brief}")
-    rfp_document = rfp_response.text
-    print("✅ RFP Document Generated.\n")
+    time.sleep(5) 
 
-    # Step 3: Financial Analyst calculates the budget based on the RFP
-    print("⏳ Agent 3 (Financial Analyst) is calculating the budget...")
-    budget_response = finance_agent.generate_content(f"RFP Document:\n{rfp_document}")
-    budget_document = budget_response.text
-    print("✅ Budget Generated.\n")
+    print("⏳ Agent 2 (Architect) drafting RFP...")
+    rfp_document = generate_with_retry(architect_agent, f"Comprehensive Client Brief:\n{client_brief}")
 
-    # Step 4: Manager reviews the combined output
-    print("⏳ Agent 4 (Manager) is reviewing the proposal...")
-    combined_docs = f"--- RFP ---\n{rfp_document}\n\n--- BUDGET ---\n{budget_document}"
-    review_response = reviewer_agent.generate_content(combined_docs)
-    manager_review = review_response.text
-    print("✅ Review Complete.\n")
+    roles = []
+    match = re.search(r'\[ROLES:\s*(.*?)\]', rfp_document, re.IGNORECASE)
+    if match:
+        roles = [role.strip() for role in match.group(1).split(',')]
+    else:
+        roles = ["Frontend Developer", "Backend Developer", "Project Manager"]
 
-    # Combine the outputs nicely so your UI can display the final results
+    clean_rfp = re.sub(r'\[ROLES:\s*(.*?)\]', '', rfp_document, flags=re.IGNORECASE).strip()
+    return client_brief, clean_rfp, roles
+
+# --- PHASE 3: Calculate Budget with Custom Roles/Rates ---
+def calculate_budget_and_review(company_name, client_brief, rfp_document, custom_rates):
+    print("⏳ Agent 3 (Finance) calculating budget with custom rates...")
+    
+    rates_text = "\n".join([f"- {role}: ${rate}/hr" for role, rate in custom_rates.items()])
+    finance_prompt = f"RFP Document:\n{rfp_document}\n\nCRITICAL: Use ONLY these exact roles and hourly rates for your estimation table:\n{rates_text}"
+    
+    budget_document = generate_with_retry(finance_agent, finance_prompt)
+
+    time.sleep(5)
+
+    print("⏳ Agent 4 (Manager) reviewing...")
+    manager_review = generate_with_retry(reviewer_agent, f"--- RFP ---\n{rfp_document}\n\n--- BUDGET ---\n{budget_document}")
+
     final_output = f"""
-# 📋 Project Proposal & Analysis
+# 📋 Project Proposal for {company_name}
 
-## 1. Executive Request Brief (Simulated Client)
+## 1. Executive Request Brief
 {client_brief}
 
 ---
@@ -113,7 +121,7 @@ def create_rfp_workflow(project_description):
 
 ---
 
-## 💰 Financial & Resource Plan
+## 💰 Financial Plan (Based on Client Rates)
 {budget_document}
 
 ---
@@ -121,11 +129,4 @@ def create_rfp_workflow(project_description):
 ## 🔍 Internal Review Board Comments
 {manager_review}
 """
-    return final_output
-
-# ==========================================
-# Run the Demo (Optional local testing)
-# ==========================================
-if __name__ == "__main__":
-    seed_idea = "I need a custom web portal to track shipments and manage our delivery drivers via mobile."
-    print(create_rfp_workflow(seed_idea))
+    return final_output, budget_document

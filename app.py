@@ -9,7 +9,7 @@ import docx2txt
 import openpyxl
 from pptx import Presentation
 from pptx.util import Inches, Pt
-import docx  # Used for generating Word documents
+import docx
 
 st.set_page_config(page_title="Agentic RFP Builder", layout="wide")
 
@@ -17,18 +17,14 @@ st.set_page_config(page_title="Agentic RFP Builder", layout="wide")
 def extract_text_from_file(uploaded_file):
     file_name = uploaded_file.name.lower()
     extracted_text = ""
-
     if file_name.endswith(('.txt', '.md')):
         extracted_text = uploaded_file.read().decode("utf-8")
-
     elif file_name.endswith('.pdf'):
         reader = pypdf.PdfReader(uploaded_file)
         for page in reader.pages:
             extracted_text += (page.extract_text() or "") + "\n"
-
     elif file_name.endswith('.docx'):
         extracted_text = docx2txt.process(uploaded_file)
-
     elif file_name.endswith('.xlsx'):
         wb = openpyxl.load_workbook(uploaded_file, data_only=True)
         for sheet in wb.sheetnames:
@@ -38,7 +34,6 @@ def extract_text_from_file(uploaded_file):
                 row_text = " ".join([str(cell) for cell in row if cell is not None])
                 if row_text.strip():
                     extracted_text += row_text + "\n"
-
     elif file_name.endswith('.pptx'):
         prs = Presentation(uploaded_file)
         for i, slide in enumerate(prs.slides):
@@ -46,9 +41,7 @@ def extract_text_from_file(uploaded_file):
             for shape in slide.shapes:
                 if hasattr(shape, "text") and shape.text.strip():
                     extracted_text += shape.text + "\n"
-                    
     return extracted_text.strip()
-
 
 # --- Helper Function: Export PDF ---
 def create_pdf(text):
@@ -59,14 +52,10 @@ def create_pdf(text):
     pdf.multi_cell(0, 6, clean_text)
     return bytes(pdf.output())
 
-
 # --- Helper Function: Export Word Document (.docx) ---
 def create_docx(text):
     doc = docx.Document()
-    # Clean out non-XML compatible characters if any exist
     clean_text = "".join(ch for ch in text if ord(ch) >= 32 or ch in "\n\r\t")
-    
-    # Process text line-by-line to preserve structure
     for line in clean_text.split('\n'):
         if line.startswith('# '):
             doc.add_heading(line.replace('# ', ''), level=1)
@@ -76,40 +65,31 @@ def create_docx(text):
             doc.add_heading(line.replace('### ', ''), level=3)
         else:
             doc.add_paragraph(line)
-            
     bio = io.BytesIO()
     doc.save(bio)
     return bio.getvalue()
 
-
 # --- Helper Function: Export PowerPoint Presentation (.pptx) ---
 def create_pptx(text):
     prs = Presentation()
-    
-    # 1. Generate an attractive Title Slide
     title_slide_layout = prs.slide_layouts[0]
     slide = prs.slides.add_slide(title_slide_layout)
     slide.shapes.title.text = "Project RFP & Proposal"
     slide.placeholders[1].text = "Generated autonomously by Agentic RFP Builder"
 
-    # 2. Map RFP sections dynamically into individual Content Slides
     bullet_slide_layout = prs.slide_layouts[1]
     lines = text.split('\n')
     current_tf = None
 
     for line in lines:
         line = line.strip()
-        if not line: 
-            continue
-        
-        # Check for markdown headers to create slides dynamically
+        if not line: continue
         if line.startswith('# ') or line.startswith('## ') or line.startswith('### '):
             slide = prs.slides.add_slide(bullet_slide_layout)
             slide.shapes.title.text = line.lstrip('#').strip()
             current_tf = slide.placeholders[1].text_frame
             current_tf.word_wrap = True
         elif current_tf:
-            # Append standard text block data as clear bullet items
             p = current_tf.add_paragraph()
             p.text = line.lstrip('- ').lstrip('* ').strip()
             p.font.size = Pt(14)
@@ -117,7 +97,6 @@ def create_pptx(text):
     bio = io.BytesIO()
     prs.save(bio)
     return bio.getvalue()
-
 
 # --- Helper Function: Markdown Table to CSV ---
 def markdown_to_csv(markdown_text):
@@ -128,12 +107,11 @@ def markdown_to_csv(markdown_text):
             csv_lines.append(",".join([col.strip() for col in clean_line.split('|')]))
     return "\n".join(csv_lines)
 
-
 # --- 🧠 SESSION STATE MEMORY ---
 if "step" not in st.session_state:
     st.session_state.step = 1
 
-st.title("🚀 Agentic RFP & Budget Estimation Platform by Team FALCON")
+st.title("🚀 Agentic RFP & Budget Estimation Platform")
 
 # ==========================================
 # STEP 1: INITIAL INPUT
@@ -141,7 +119,7 @@ st.title("🚀 Agentic RFP & Budget Estimation Platform by Team FALCON")
 if st.session_state.step == 1:
     col1, col2 = st.columns(2)
     with col1:
-        company_name = st.text_input("Client / Company Name:", placeholder="e.g., CGI Inc.")
+        company_name = st.text_input("Client / Company Name:", placeholder="e.g., Acme Logistics")
     
     st.markdown("---")
     st.markdown("### 📝 Project Scope Input")
@@ -152,7 +130,6 @@ if st.session_state.step == 1:
     with input_col:
         st.markdown("#### Option A: Type Requirements")
         raw_input = st.text_area("Enter raw project scope or rough notes:", height=180, placeholder="Type here...")
-        
     with file_col:
         st.markdown("#### Option B: Upload Requirements File")
         uploaded_file = st.file_uploader(
@@ -166,7 +143,6 @@ if st.session_state.step == 1:
 
     if st.button("Step 1: Start Discovery Phase", type="primary"):
         final_requirements = ""
-
         if raw_input.strip():
             final_requirements = raw_input.strip()
         elif uploaded_file is not None:
@@ -174,13 +150,19 @@ if st.session_state.step == 1:
                 final_requirements = extract_text_from_file(uploaded_file)
         
         if company_name.strip() and final_requirements:
-            with st.spinner("Lead BA Agent is analyzing scope and generating questions..."):
-                questions = generate_clarifying_questions(company_name, final_requirements)
-                st.session_state.company_name = company_name
-                st.session_state.raw_input = final_requirements
-                st.session_state.questions = questions
-                st.session_state.step = 2
-                st.rerun()
+            with st.status("🚀 Initializing Agent Framework...", expanded=True) as status_box:
+                questions = generate_clarifying_questions(
+                    company_name, 
+                    final_requirements, 
+                    status_callback=status_box.write
+                )
+                status_box.update(label="Discovery Analysis Complete!", state="complete", expanded=False)
+                
+            st.session_state.company_name = company_name
+            st.session_state.raw_input = final_requirements
+            st.session_state.questions = questions
+            st.session_state.step = 2
+            st.rerun()
         else:
             st.error("Missing Information: Please ensure you provide a Company Name and either type requirements OR upload a supported file.")
 
@@ -197,17 +179,21 @@ elif st.session_state.step == 2:
     with col1:
         if st.button("Step 2: Draft RFP", type="primary"):
             if user_answers.strip():
-                with st.spinner("AI Architect is drafting the RFP and identifying roles..."):
+                with st.status("🚀 Launching Multi-Agent Drafting Sequence...", expanded=True) as status_box:
                     brief, rfp, roles = draft_rfp_and_get_roles(
                         st.session_state.company_name, 
                         st.session_state.raw_input, 
-                        user_answers
+                        user_answers,
+                        status_callback=status_box.write
                     )
-                    st.session_state.client_brief = brief
-                    st.session_state.rfp_text = rfp
-                    st.session_state.role_data = [{"Role": r, "Rate ($/hr)": 50} for r in roles]
-                    st.session_state.step = 3
-                    st.rerun()
+                    status_box.update(label="RFP Document Architecture Formed!", state="complete", expanded=False)
+                    
+                st.session_state.client_brief = brief
+                st.session_state.rfp_text = rfp
+                # Using a generic "Rate" key here allows the dynamic header configuration in Step 3
+                st.session_state.role_data = [{"Role": r, "Rate": 50} for r in roles]
+                st.session_state.step = 3
+                st.rerun()
             else:
                 st.error("Please provide answers to continue.")
     with col2:
@@ -216,19 +202,31 @@ elif st.session_state.step == 2:
             st.rerun()
 
 # ==========================================
-# STEP 3: DYNAMIC ROLE EDITOR
+# STEP 3: DYNAMIC ROLE & CURRENCY EDITOR
 # ==========================================
 elif st.session_state.step == 3:
     st.success("✨ RFP Drafted!")
-    st.markdown("### 💸 Adjust Roles & Rates")
-    st.info("You can edit rates, add new roles (click the '+' at the bottom of the table), or delete roles by selecting a row and pressing 'Delete'.")
+    st.markdown("### 💸 Adjust Team, Currency & Rates")
     
+    # Currency configuration relocated to Step 3 layout flow with CAD added
+    col_curr, _ = st.columns([3, 5])
+    with col_curr:
+        currency_selection = st.selectbox(
+            "Select Project Estimation Currency:",
+            ["USD ($)", "INR (₹)", "CAD ($)", "EUR (€)", "GBP (£)"]
+        )
+        # Isolate target raw character symbol
+        st.session_state.currency_symbol = currency_selection.split("(")[1].replace(")", "")
+    
+    st.info(f"Edit rates below in ({st.session_state.currency_symbol}), append target responsibilities, or clear rows.")
+    
+    # Interactive Data Editor mapping
     edited_roles = st.data_editor(
         st.session_state.role_data,
         num_rows="dynamic",
         column_config={
             "Role": st.column_config.TextColumn("Role Required", required=True),
-            "Rate ($/hr)": st.column_config.NumberColumn("Hourly Rate ($)", min_value=10, required=True)
+            "Rate": st.column_config.NumberColumn(f"Hourly Rate ({st.session_state.currency_symbol})", min_value=1, required=True)
         },
         use_container_width=True
     )
@@ -236,42 +234,43 @@ elif st.session_state.step == 3:
     col1, col2 = st.columns([1, 4])
     with col1:
         if st.button("Step 3: Calculate Final Budget", type="primary"):
-            custom_rates = {row["Role"]: row["Rate ($/hr)"] for row in edited_roles if row["Role"]}
+            custom_rates = {row["Role"]: row["Rate"] for row in edited_roles if row.get("Role")}
             
-            with st.spinner("Finance Agent calculating costs based on your custom team..."):
+            with st.status("🚀 Launching Finance & Auditing Crew...", expanded=True) as status_box:
                 final_out, budget_text = calculate_budget_and_review(
                     st.session_state.company_name,
                     st.session_state.client_brief,
                     st.session_state.rfp_text,
-                    custom_rates
+                    custom_rates,
+                    st.session_state.currency_symbol,
+                    status_callback=status_box.write
                 )
-                st.session_state.budget_text = budget_text
-                st.session_state.final_out = final_out
-                st.session_state.step = 4
-                st.rerun()
+                status_box.update(label="Financial Modeling Complete!", state="complete", expanded=False)
+                
+            st.session_state.budget_text = budget_text
+            st.session_state.final_out = final_out
+            st.session_state.step = 4
+            st.rerun()
     with col2:
         if st.button("Start Over"):
             st.session_state.step = 1
             st.rerun()
 
 # ==========================================
-# STEP 4: FINAL OUTPUT (WITH MULTI-FORMAT EXPORTS)
+# STEP 4: FINAL OUTPUT
 # ==========================================
 elif st.session_state.step == 4:
     st.success("✅ Multi-Agent Workflow Complete!")
     st.markdown("### 💾 Export Documents")
     
-    # Grid Layout for Download Adjustments
     col_format, col_rfp_btn, col_budget_btn, col_reset = st.columns([2, 2, 2, 2])
     
     with col_format:
-        # User Choice Dropdown updated to include PowerPoint
         selected_format = st.selectbox(
             "Select RFP Format:", 
             ["PDF (.pdf)", "Word Document (.docx)", "PowerPoint Presentation (.pptx)", "Markdown (.md)", "Plain Text (.txt)"]
         )
     
-    # Process the file compilation depending on the selectbox state
     if selected_format == "PDF (.pdf)":
         rfp_data = create_pdf(st.session_state.rfp_text)
         file_ext = "pdf"
@@ -294,7 +293,7 @@ elif st.session_state.step == 4:
         mime_type = "text/plain"
 
     with col_rfp_btn:
-        st.write(" ") # Structural layout alignment spacing
+        st.write(" ")
         st.write(" ")
         st.download_button(
             label=f"📄 Download RFP ({file_ext.upper()})",

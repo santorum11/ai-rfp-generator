@@ -111,7 +111,7 @@ def markdown_to_csv(markdown_text):
 if "step" not in st.session_state:
     st.session_state.step = 1
 
-st.title("🚀 Agentic RFP & Budget Estimation Platform")
+st.title("🚀 Agentic RFP & Budget Estimation Platform by Team Falcon")
 
 # ==========================================
 # STEP 1: INITIAL INPUT
@@ -119,7 +119,7 @@ st.title("🚀 Agentic RFP & Budget Estimation Platform")
 if st.session_state.step == 1:
     col1, col2 = st.columns(2)
     with col1:
-        company_name = st.text_input("Client / Company Name:", placeholder="e.g., Acme Logistics")
+        company_name = st.text_input("Client / Company Name:", placeholder="e.g., CGI Inc.")
     
     st.markdown("---")
     st.markdown("### 📝 Project Scope Input")
